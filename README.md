@@ -14,7 +14,7 @@ a random scary sound blasts from the speaker. Built on the person detector from
 - **Low lag**: frames are read on a background thread and only the newest is used, so the
   scare isn't delayed by the RTSP buffer. Reconnects if the stream drops.
 - **Random sound** from `sounds/`, preloaded so playback starts instantly. Never the same twice in a row.
-- **Cross-platform audio** (pygame) instead of Windows-only `winsound`.
+- **Cross-platform audio** (pygame-ce, which ships prebuilt for new Python versions) instead of Windows-only `winsound`.
 - **Keeps Bluetooth speakers awake** with an inaudible 40 Hz tone every 4 minutes.
 - **Blocks idle sleep** while running (Windows, macOS).
 - **Optional reaction photos** at +0s/+1s/+2s after each scare.
