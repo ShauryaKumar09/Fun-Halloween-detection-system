@@ -1,0 +1,11 @@
+{
+  "source": "rtsp://USER:PASSWORD@192.168.x.x:554/live/ch1",
+  "dwell_seconds": 1.5,
+  "cooldown_seconds": 25,
+  "trigger_mode": "size",
+  "min_height_frac": 0.35,
+  "volume": 1.0,
+  "keepalive_seconds": 240,
+  "headless": false,
+  "snapshot_dir": "snapshots"
+}
