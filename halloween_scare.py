@@ -9,7 +9,6 @@ Run `python halloween_scare.py --help` for options.
 """
 
 import argparse
-import array
 import json
 import logging
 import math
@@ -22,19 +21,17 @@ import threading
 import time
 from pathlib import Path
 
-os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
-# Otherwise SDL (inside pygame) hijacks SIGTERM and the script can't be stopped cleanly.
-os.environ.setdefault("SDL_NO_SIGNAL_HANDLERS", "1")
-
-import cv2  # noqa: E402
-import mediapipe as mp  # noqa: E402
-import pygame  # noqa: E402
-from mediapipe.tasks import python as mp_python  # noqa: E402
-from mediapipe.tasks.python import vision  # noqa: E402
+import cv2
+import mediapipe as mp
+import numpy as np
+import sounddevice as sd
+import soundfile as sf
+from mediapipe.tasks import python as mp_python
+from mediapipe.tasks.python import vision
 
 HERE = Path(__file__).resolve().parent
 SETTINGS_FILE = HERE / "settings.json"
-SOUND_EXTENSIONS = {".wav", ".ogg", ".mp3", ".flac"}
+SOUND_EXTENSIONS = {".wav", ".ogg", ".mp3", ".flac", ".aiff", ".aif"}
 
 DEFAULTS = {
     # Camera: RTSP URL, video file path, or webcam index like "0".
@@ -264,64 +261,87 @@ class PersonDetector:
 # --------------------------------------------------------------------------- audio
 
 class SoundBoard:
+    """Preloads sounds into memory and plays them through the default output device.
+
+    Uses sounddevice (PortAudio), which mediapipe already depends on. pygame was dropped
+    because its bundled SDL clashes with the SDL inside OpenCV on macOS.
+    """
+
+    KEEPALIVE_RATE = 44100
+
     def __init__(self, sounds_dir, volume, keepalive_seconds):
-        pygame.mixer.pre_init(44100, -16, 2, 512)
-        pygame.mixer.init()
         self.volume = max(0.0, min(1.0, volume))
-        self.sounds = []
-        for path in sorted(Path(sounds_dir).iterdir()) if Path(sounds_dir).is_dir() else []:
+        self.sounds = []  # (name, samples float32 [frames, channels], samplerate)
+        sounds_dir = Path(sounds_dir)
+        for path in sorted(sounds_dir.iterdir()) if sounds_dir.is_dir() else []:
             if path.suffix.lower() not in SOUND_EXTENSIONS:
                 continue
             try:
-                snd = pygame.mixer.Sound(str(path))  # preloaded: no disk delay at scare time
-            except pygame.error as e:
+                data, rate = sf.read(str(path), dtype="float32", always_2d=True)
+            except Exception as e:  # soundfile raises several types for bad/unsupported files
                 log.warning("Skipping %s: %s", path.name, e)
                 continue
-            snd.set_volume(self.volume)
-            self.sounds.append((path.name, snd))
+            self.sounds.append((path.name, data * self.volume, rate))
         if not self.sounds:
             raise SystemExit(f"No playable sounds in {sounds_dir} (supported: {sorted(SOUND_EXTENSIONS)})")
-        log.info("Loaded %d sound(s): %s", len(self.sounds), ", ".join(n for n, _ in self.sounds))
+        log.info("Loaded %d sound(s): %s", len(self.sounds), ", ".join(n for n, _, _ in self.sounds))
+        try:
+            log.info("Audio output: %s", sd.query_devices(kind="output")["name"])
+        except Exception as e:
+            log.warning("No audio output device found: %s", e)
         self._last_name = None
         self.keepalive_seconds = keepalive_seconds
         self._last_audio = time.monotonic()
+        self._busy_until = 0.0
         self._tone = self._make_keepalive_tone() if keepalive_seconds else None
+
+    def _play(self, data, rate):
+        """Non-blocking. Never raises: a missing speaker must not kill the detector loop."""
+        try:
+            sd.play(data, rate)  # stops whatever was playing
+        except Exception as e:
+            log.error("Audio playback failed (speaker disconnected?): %s", e)
+            return False
+        now = time.monotonic()
+        self._busy_until = now + len(data) / rate
+        self._last_audio = now
+        return True
 
     def play(self):
         choices = [s for s in self.sounds if s[0] != self._last_name] or self.sounds
-        name, snd = random.choice(choices)
-        pygame.mixer.stop()
-        snd.play()
+        name, data, rate = random.choice(choices)
         self._last_name = name
-        self._last_audio = time.monotonic()
+        self._play(data, rate)
         return name
 
     def busy(self):
-        return pygame.mixer.get_busy()
+        return time.monotonic() < self._busy_until
 
     def tick(self):
         """Call regularly. Plays an almost-silent tone to keep Bluetooth speakers awake."""
         now = time.monotonic()
         if self.busy():
             self._last_audio = now
-        elif self._tone and now - self._last_audio >= self.keepalive_seconds:
-            self._tone.play()
-            self._last_audio = now
+        elif self._tone is not None and now - self._last_audio >= self.keepalive_seconds:
+            self._play(self._tone, self.KEEPALIVE_RATE)
             log.debug("keepalive tone")
 
-    @staticmethod
-    def _make_keepalive_tone():
-        freq, size, channels = pygame.mixer.get_init()
-        if size != -16:
-            log.warning("Mixer is not 16-bit; keepalive tone disabled")
-            return None
-        amplitude = 300  # about -40 dBFS at 40 Hz: effectively inaudible, but a real signal
-        n = freq  # 1 second
-        samples = array.array("h")
-        for i in range(n):
-            v = int(amplitude * math.sin(2 * math.pi * 40 * i / freq))
-            samples.extend([v] * channels)
-        return pygame.mixer.Sound(buffer=samples.tobytes())
+    def wait(self):
+        while self.busy():
+            time.sleep(0.05)
+
+    def close(self):
+        try:
+            sd.stop()
+        except Exception:
+            pass
+
+    @classmethod
+    def _make_keepalive_tone(cls):
+        # About -40 dBFS at 40 Hz for 1 second: effectively inaudible, but a real signal.
+        t = np.arange(cls.KEEPALIVE_RATE) / cls.KEEPALIVE_RATE
+        tone = (0.01 * np.sin(2 * np.pi * 40 * t)).astype("float32")
+        return np.column_stack([tone, tone])
 
 
 # --------------------------------------------------------------------------- misc helpers
@@ -396,11 +416,10 @@ def run_set_zone(settings):
 
 def run_test_sound(settings):
     board = SoundBoard(resolve(settings["sounds_dir"]), settings["volume"], 0)
-    for name, snd in board.sounds:
-        print(f"Playing {name} ...")
-        snd.play()
-        while pygame.mixer.get_busy():
-            time.sleep(0.1)
+    for name, data, rate in board.sounds:
+        print(f"Playing {name} ({len(data) / rate:.1f}s) ...", flush=True)
+        board._play(data, rate)
+        board.wait()
 
 
 def draw_overlay(frame, people, qualifying, settings, trigger, now, fps):
@@ -519,7 +538,7 @@ def run_scare(settings):
     finally:
         reader.stop()
         detector.close()
-        pygame.mixer.quit()
+        board.close()
         if not headless:
             cv2.destroyAllWindows()
         log.info("Stopped after %d scare(s)", scare_count)

@@ -14,7 +14,7 @@ a random scary sound blasts from the speaker. Built on the person detector from
 - **Low lag**: frames are read on a background thread and only the newest is used, so the
   scare isn't delayed by the RTSP buffer. Reconnects if the stream drops.
 - **Random sound** from `sounds/`, preloaded so playback starts instantly. Never the same twice in a row.
-- **Cross-platform audio** (pygame-ce, which ships prebuilt for new Python versions) instead of Windows-only `winsound`.
+- **Cross-platform audio** (sounddevice, already a mediapipe dependency) instead of Windows-only `winsound`. A disconnected speaker logs an error instead of crashing.
 - **Keeps Bluetooth speakers awake** with an inaudible 40 Hz tone every 4 minutes.
 - **Blocks idle sleep** while running (Windows, macOS).
 - **Optional reaction photos** at +0s/+1s/+2s after each scare.
@@ -35,7 +35,7 @@ pip install -r requirements.txt
 
 Copy `settings.example.json` to `settings.json` and put in your camera's RTSP URL.
 
-Add your scary sounds to `sounds/` (`.wav`, `.ogg`, `.mp3`, `.flac`). Sounds with an
+Add your scary sounds to `sounds/` (`.wav`, `.mp3`, `.ogg`, `.flac`, `.aiff`). Sounds with an
 **instant loud start** work best; trim any silence at the beginning or the scare lands late.
 
 ## Run
@@ -80,7 +80,7 @@ height. It's just as scary, and nobody leaves with ringing ears.
 
 | Symptom | Fix |
 |---|---|
-| `Could not open camera` | Check the URL in VLC first (Media > Open Network Stream). |
+| `Could not open camera` / `No route to host` / `Host is down` | The laptop can't reach the camera at all. Check: same Wi-Fi network; camera's current IP (it may have changed, look in the camera app or router); on macOS, System Settings > Privacy & Security > Local Network > enable Terminal. Then test the URL in VLC. |
 | Choppy/grey frames, frequent reconnects | `--rtsp-tcp` |
 | Scare is late | Lower `dwell_seconds`; use the camera's sub-stream (lower resolution) URL; trim silence from the sound file |
 | Low fps on old laptop | `--headless`, or lower `detect_width` in `settings.json` (e.g. 480) |

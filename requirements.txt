@@ -1,3 +1,6 @@
+# mediapipe also installs opencv-contrib-python (with GUI support) and sounddevice.
+# Don't add opencv-python on top: two OpenCV packages share the cv2 folder and clash.
 mediapipe>=0.10.14
-opencv-python>=4.6
-pygame-ce>=2.5  # drop-in pygame fork; has prebuilt wheels for new Pythons (pygame does not)
+sounddevice>=0.4.6
+soundfile>=0.12
+numpy
