@@ -462,7 +462,7 @@ def run_scare(settings):
     window = "Halloween scare (q = quit, s = test sound)"
     if not headless:
         try:
-            cv2.namedWindow(window, cv2.WINDOW_NORMAL)
+            cv2.namedWindow(window, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)  # resizable, no stretching
         except cv2.error:
             log.warning("No GUI available; running headless")
             headless = True
