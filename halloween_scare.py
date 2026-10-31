@@ -52,6 +52,9 @@ DEFAULTS = {
     "min_height_frac": 0.35,
     "zone": None,                  # [x1, y1, x2, y2], normalized 0-1; set with --set-zone
     "detect_width": 640,           # frames are shrunk to this width before detection
+    # Real picture shape (width / height), e.g. 1.7778 for 16:9. Some cameras squeeze a
+    # widescreen picture into their SD stream; this un-squeezes it. None = use as-is.
+    "aspect_ratio": None,
     "keepalive_seconds": 240,      # quiet tone so Bluetooth speakers don't auto-sleep; 0 = off
     "headless": False,             # no preview window (saves CPU)
     "snapshot_dir": None,          # save frames at +0s/+1s/+2s after each scare; None = off
@@ -229,7 +232,7 @@ def _redact(source):
 # --------------------------------------------------------------------------- detection
 
 class PersonDetector:
-    def __init__(self, model_path, min_score, detect_width):
+    def __init__(self, model_path, min_score, detect_width, aspect_ratio=None):
         options = vision.ObjectDetectorOptions(
             base_options=mp_python.BaseOptions(model_asset_path=str(model_path)),
             running_mode=vision.RunningMode.IMAGE,
@@ -239,13 +242,19 @@ class PersonDetector:
         )
         self.detector = vision.ObjectDetector.create_from_options(options)
         self.detect_width = detect_width
+        self.aspect_ratio = aspect_ratio
+        self._logged_size = False
 
     def detect(self, frame):
         """Returns (small_frame, [(x, y, w, h, score), ...]) in small_frame pixels."""
         h, w = frame.shape[:2]
-        if self.detect_width and w > self.detect_width:
-            scale = self.detect_width / w
-            frame = cv2.resize(frame, (self.detect_width, int(h * scale)), interpolation=cv2.INTER_AREA)
+        out_w = min(w, self.detect_width) if self.detect_width else w
+        out_h = round(out_w / self.aspect_ratio) if self.aspect_ratio else round(h * out_w / w)
+        if (out_w, out_h) != (w, h):
+            frame = cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_AREA)
+        if not self._logged_size:
+            log.info("Stream frames are %dx%d; detecting on %dx%d", w, h, out_w, out_h)
+            self._logged_size = True
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         result = self.detector.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb))
         people = []
@@ -449,7 +458,8 @@ def run_scare(settings):
     if not model_path.exists():
         raise SystemExit(f"Model not found: {model_path}")
     board = SoundBoard(resolve(settings["sounds_dir"]), settings["volume"], settings["keepalive_seconds"])
-    detector = PersonDetector(model_path, settings["min_score"], settings["detect_width"])
+    detector = PersonDetector(model_path, settings["min_score"], settings["detect_width"],
+                              settings["aspect_ratio"])
     trigger = ScareTrigger(settings["dwell_seconds"], settings["grace_seconds"], settings["cooldown_seconds"])
     snapshot_dir = resolve(settings["snapshot_dir"]) if settings["snapshot_dir"] else None
     if snapshot_dir:
@@ -555,6 +565,8 @@ def main():
     p.add_argument("--mode", dest="trigger_mode", choices=["any", "size", "zone"])
     p.add_argument("--min-height", dest="min_height_frac", type=float,
                    help="size mode: min person height as fraction of frame (0-1)")
+    p.add_argument("--aspect", dest="aspect_ratio", type=float,
+                   help="true picture width/height, e.g. 1.7778 for 16:9 (fixes squished SD streams)")
     p.add_argument("--keepalive", dest="keepalive_seconds", type=float, help="0 disables")
     p.add_argument("--snapshots", dest="snapshot_dir", help="folder to save reaction photos")
     p.add_argument("--rtsp-tcp", dest="rtsp_tcp", action="store_true", default=None)

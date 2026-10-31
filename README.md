@@ -83,6 +83,7 @@ height. It's just as scary, and nobody leaves with ringing ears.
 | `Could not open camera` / `No route to host` / `Host is down` | The laptop can't reach the camera at all. Check: same Wi-Fi network; camera's current IP (it may have changed, look in the camera app or router); on macOS, System Settings > Privacy & Security > Local Network > enable Terminal. Then test the URL in VLC. |
 | Choppy/grey frames, frequent reconnects | `--rtsp-tcp` |
 | Scare is late | Lower `dwell_seconds`; use the camera's sub-stream (lower resolution) URL; trim silence from the sound file |
+| Picture looks squished (text tall and narrow) | The SD stream squeezes a widescreen picture. Add `"aspect_ratio": 1.7778` (16:9) to `settings.json`. Also helps detection. |
 | Low fps on old laptop | `--headless`, or lower `detect_width` in `settings.json` (e.g. 480) |
 | Sound plays on laptop instead of speaker | Set the speaker as the OS default output device *before* starting the script |
 
